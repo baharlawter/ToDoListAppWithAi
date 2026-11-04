@@ -136,6 +136,7 @@ button { cursor: pointer; }
 .today-label { font-size: 9px; }
 .today-date { color: #898d86; font-size: 12px; }
 .content { width: min(100% - 56px, 760px); margin: 0 auto; padding: 68px 0 34px; }
+.error-banner { margin-bottom: 22px; padding: 12px 14px; border: 1px solid #e6c6ba; border-radius: 7px; background: #fbefeb; color: #854e3e; font-size: 12px; line-height: 1.5; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
 .eyebrow { margin-bottom: 10px; color: #a47c5d; font-size: 9px; letter-spacing: 1.55px; }
 h1, h2, h3, p { margin-top: 0; }
@@ -215,6 +216,7 @@ h1 {
 .list-heading > div > span { color: #a0a29b; font-size: 10px; }
 .clear-button { padding: 5px 0 5px 8px; border: 0; background: transparent; color: #92958d; font-size: 10px; }
 .clear-button:hover { color: #a4604e; }
+.clear-button:disabled, .task-check:disabled, .delete-button:disabled { cursor: wait; opacity: .5; }
 
 .task-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .task-row {

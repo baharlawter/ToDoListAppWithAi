@@ -1,21 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 
-const STORAGE_KEY = "daylight-todos";
-
 const filters = [
   { id: "all", label: "All tasks" },
   { id: "active", label: "To do" },
   { id: "completed", label: "Completed" },
 ];
 
-function readTasks() {
-  try {
-    const savedTasks = window.localStorage.getItem(STORAGE_KEY);
-    return savedTasks ? JSON.parse(savedTasks) : [];
-  } catch (error) {
-    console.error("Could not load saved tasks.", error);
-    return [];
+async function requestTasks(path = "", options = {}) {
+  const response = await fetch(`/api/tasks${path}`, {
+    ...options,
+    headers: {
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...options.headers,
+    },
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Request failed (${response.status})`);
   }
+
+  return response.status === 204 ? null : response.json();
 }
 
 function formatDate(date) {
@@ -27,17 +32,29 @@ function formatDate(date) {
 }
 
 function App() {
-  const [tasks, setTasks] = useState(readTasks);
+  const [tasks, setTasks] = useState([]);
   const [filter, setFilter] = useState("all");
   const [newTask, setNewTask] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
-    } catch (error) {
-      console.error("Could not save tasks.", error);
-    }
-  }, [tasks]);
+    const controller = new AbortController();
+    requestTasks("", { signal: controller.signal })
+      .then(setTasks)
+      .catch((requestError) => {
+        if (requestError.name !== "AbortError") {
+          setError("Couldn't connect to the to-do service. Make sure the API and database are running, then try again.");
+          console.error("Could not load tasks.", requestError);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setIsLoading(false);
+      });
+
+    return () => controller.abort();
+  }, []);
 
   const visibleTasks = useMemo(() => {
     if (filter === "active") return tasks.filter((task) => !task.completed);
@@ -48,32 +65,78 @@ function App() {
   const remainingCount = tasks.filter((task) => !task.completed).length;
   const completedCount = tasks.length - remainingCount;
 
-  function addTask(event) {
+  async function addTask(event) {
     event.preventDefault();
     const title = newTask.trim();
-    if (!title) return;
+    if (!title || isSaving) return;
 
-    setTasks((currentTasks) => [
-      { id: crypto.randomUUID(), title, completed: false, createdAt: Date.now() },
-      ...currentTasks,
-    ]);
-    setNewTask("");
+    setIsSaving(true);
+    setError("");
+    try {
+      const task = await requestTasks("", {
+        method: "POST",
+        body: JSON.stringify({ title }),
+      });
+      setTasks((currentTasks) => [task, ...currentTasks]);
+      setNewTask("");
+    } catch (requestError) {
+      setError("Couldn't add the task. Please try again.");
+      console.error("Could not add task.", requestError);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
-  function toggleTask(id) {
-    setTasks((currentTasks) =>
-      currentTasks.map((task) =>
-        task.id === id ? { ...task, completed: !task.completed } : task,
-      ),
-    );
+  async function toggleTask(task) {
+    if (isSaving) return;
+    setIsSaving(true);
+    setError("");
+    try {
+      const updatedTask = await requestTasks(`/${task.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ completed: !task.completed }),
+      });
+      setTasks((currentTasks) =>
+        currentTasks.map((currentTask) =>
+          currentTask.id === task.id ? updatedTask : currentTask,
+        ),
+      );
+    } catch (requestError) {
+      setError("Couldn't update the task. Please try again.");
+      console.error("Could not update task.", requestError);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
-  function deleteTask(id) {
-    setTasks((currentTasks) => currentTasks.filter((task) => task.id !== id));
+  async function deleteTask(id) {
+    if (isSaving) return;
+    setIsSaving(true);
+    setError("");
+    try {
+      await requestTasks(`/${id}`, { method: "DELETE" });
+      setTasks((currentTasks) => currentTasks.filter((task) => task.id !== id));
+    } catch (requestError) {
+      setError("Couldn't delete the task. Please try again.");
+      console.error("Could not delete task.", requestError);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
-  function clearCompleted() {
-    setTasks((currentTasks) => currentTasks.filter((task) => !task.completed));
+  async function clearCompleted() {
+    if (isSaving) return;
+    setIsSaving(true);
+    setError("");
+    try {
+      await requestTasks("/completed", { method: "DELETE" });
+      setTasks((currentTasks) => currentTasks.filter((task) => !task.completed));
+    } catch (requestError) {
+      setError("Couldn't clear completed tasks. Please try again.");
+      console.error("Could not clear completed tasks.", requestError);
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
@@ -127,6 +190,7 @@ function App() {
         </header>
 
         <div className="content">
+          {error && <div className="error-banner" role="alert">{error}</div>}
           <div className="page-heading">
             <div>
               <div className="eyebrow">A FRESH PAGE</div>
@@ -158,7 +222,7 @@ function App() {
               value={newTask}
               maxLength={180}
             />
-            <button type="submit" disabled={!newTask.trim()}>Add task</button>
+            <button type="submit" disabled={!newTask.trim() || isSaving}>Add task</button>
           </form>
 
           <div className="list-heading">
@@ -167,20 +231,27 @@ function App() {
               <span>{visibleTasks.length} {visibleTasks.length === 1 ? "task" : "tasks"}</span>
             </div>
             {completedCount > 0 && (
-              <button className="clear-button" onClick={clearCompleted} type="button">
+              <button className="clear-button" onClick={clearCompleted} type="button" disabled={isSaving}>
                 Clear completed
               </button>
             )}
           </div>
 
-          {visibleTasks.length > 0 ? (
+          {isLoading ? (
+            <div className="empty-state" role="status">
+              <span className="empty-illustration" aria-hidden="true">…</span>
+              <h3>Loading your tasks</h3>
+              <p>Your list will be ready in a moment.</p>
+            </div>
+          ) : visibleTasks.length > 0 ? (
             <ul className="task-list">
               {visibleTasks.map((task) => (
                 <li className={`task-row ${task.completed ? "is-complete" : ""}`} key={task.id}>
                   <button
                     className="task-check"
-                    onClick={() => toggleTask(task.id)}
+                    onClick={() => toggleTask(task)}
                     type="button"
+                    disabled={isSaving}
                     aria-label={task.completed ? `Mark ${task.title} as not done` : `Mark ${task.title} as done`}
                     aria-pressed={task.completed}
                   >
@@ -192,6 +263,7 @@ function App() {
                     className="delete-button"
                     onClick={() => deleteTask(task.id)}
                     type="button"
+                    disabled={isSaving}
                     aria-label={`Delete ${task.title}`}
                     title="Delete task"
                   >
