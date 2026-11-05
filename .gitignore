@@ -1,4 +1,8 @@
 node_modules/
 dist/
 BackEnd/target/
+BackEnd/*.db
+BackEnd/*.db-journal
+BackEnd/*.db-shm
+BackEnd/*.db-wal
 .vite/
